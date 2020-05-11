@@ -10,7 +10,7 @@ import (
 
 func main() {
 	decoder := xml.NewDecoder(os.Stdin)
-	canonical, err := c14n.Canonicalize(decoder)
+	canonical, err := c14n.Canonicalize("root", decoder)
 	if err != nil {
 		panic(err)
 	}

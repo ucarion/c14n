@@ -1,5 +1,5 @@
 <!DOCTYPE doc [<!ATTLIST e9 attr CDATA "default">]>
-<doc>
+<doc ID="root">
    <e1   />
    <e2   ></e2>
    <e3   name = "elem3"   id="elem3"   />

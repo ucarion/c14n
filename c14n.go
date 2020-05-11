@@ -4,26 +4,27 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"sort"
+
+	"github.com/ucarion/c14n/internal/stack"
 )
 
-func Canonicalize(d *xml.Decoder) ([]byte, error) {
-	stack := stack([]map[string]string{})
-	buf := bytes.Buffer{}
-
-	if err := canonicalize(&stack, &buf, d); err != nil && err != io.EOF {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
+type RawTokenReader interface {
+	RawToken() (xml.Token, error)
 }
 
-func canonicalize(s *stack, buf *bytes.Buffer, d *xml.Decoder) error {
+func Canonicalize(id string, r RawTokenReader) ([]byte, error) {
+	var s stack.Stack
+	buf := bytes.Buffer{}
+
+	var startRootNode xml.StartElement // the start of the root node, special-cased
+	rootNodeDepth := -1                // -1 indicates that the root node is not yet found
+
+loop:
 	for {
-		token, err := d.RawToken()
+		token, err := r.RawToken()
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		switch t := token.(type) {
@@ -31,122 +32,61 @@ func canonicalize(s *stack, buf *bytes.Buffer, d *xml.Decoder) error {
 			// First, process the name declarations provided in this element. We will
 			// need these in order to determine the appropriate namespace URI for a
 			// particular local name.
+			//
+			// In this step, we also determine if we are working with the root of the
+			// node-set we are to canonicalize.
 			names := map[string]string{}
+			isRoot := false
 			for _, attr := range t.Attr {
 				if attr.Name.Space == "xmlns" {
 					names[attr.Name.Local] = attr.Value
 				} else if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
 					names[attr.Value] = ""
 				}
+
+				if attr.Name.Local == "ID" && attr.Value == id {
+					isRoot = true
+				}
 			}
 
-			// Push the names onto the stack. We need these to determine the
-			// appropriate sort order of the attributes.
+			// Push the names onto the stack. Elements after us are going to need
+			// these names in order to determine their attribute sort order,
+			// regardless of whether this particular element is part of the node-set
+			// to canonicalize.
 			s.Push(names)
 
-			// Establish a sorted order of attributes using sortAttr, which implements
-			// the ordering rules of the c14n spec.
-			sortAttr := sortAttr{stack: s, attrs: t.Attr}
-			sort.Sort(sortAttr)
-
-			// Write out the element. From the spec:
-			//
-			// If the element is in the node-set, then the result is an open angle
-			// bracket (<), the element QName, the result of processing the namespace
-			// axis, the result of processing the attribute axis, a close angle
-			// bracket (>), [...]
-			//
-			// Where QName is:
-			//
-			// The QName of a node is either the local name if the namespace prefix
-			// string is empty or the namespace prefix, a colon, then the local name
-			// of the element. The namespace prefix used in the QName MUST be the same
-			// one which appeared in the input document.
-			//
-			// https://www.w3.org/TR/2001/REC-xml-c14n-20010315#ProcessingModel
-			//
-			// So here we write out '<' unconditionally, and then write out
-			// space:local if there's a space, or just local otherwise.
-			if t.Name.Space == "" {
-				fmt.Fprintf(buf, "<%s", t.Name.Local)
-			} else {
-				fmt.Fprintf(buf, "<%s:%s", t.Name.Space, t.Name.Local)
-			}
-
-			for _, attr := range sortAttr.attrs {
-				// prevStack := s.PeekPop()
-
-				// // Attribute nodes are special-cased. From the spec:
-				// //
-				// // [...] if the first node is not the default namespace node (a node
-				// // with no namespace URI and no local name), then generate a space
-				// // followed by xmlns="" if and only if the following conditions are met:
-				// //
-				// // * the element E that owns the axis is in the node-set
-				// //
-				// // * The nearest ancestor element of E in the node-set has a default
-				// // namespace node in the node-set (default namespace nodes always have
-				// // non-empty values in XPath
-				// //
-				// // Essentially, this means: if you're about to render a namespace
-				// // attribute, first check if it's actually changing anything. If it
-				// // doesn't change anything, don't render this attribute.
-				// if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
-				// 	// Check if the default namespace is different from the one we're
-				// 	// about to set, and skip the attribute otherwise.
-				// 	if prevStack.Get("") == attr.Value {
-				// 		continue
-				// 	}
-				// }
-
-				// if attr.Name.Space == "xmlns" {
-				// 	// Check if the namespace we're about to assign to is different form
-				// 	// the one we're about to set, and skip otherwise.
-				// 	if prevStack.Get(attr.Name.Local) == attr.Value {
-				// 		continue
-				// 	}
-				// }
-
-				// From the spec:
-				//
-				// Attribute Nodes- a space, the node's QName, an equals sign, an open
-				// quotation mark (double quote), the modified string value, and a close
-				// quotation mark (double quote). The string value of the node is
-				// modified by replacing all ampersands (&) with &amp;, all open angle
-				// brackets (<) with &lt;, all quotation mark characters with &quot;,
-				// and the whitespace characters #x9, #xA, and #xD, with character
-				// references. The character references are written in uppercase
-				// hexadecimal with no leading zeroes (for example, #xD is represented
-				// by the character reference &#xD;).
-				//
-				// QName is already described in a comment above.
-				//
-				// https://www.w3.org/TR/2001/REC-xml-c14n-20010315#ProcessingModel
-				//
-				// xml.EscapeText does not implement this, and practice this is a
-				// significant problem because it will escape single-quotes into
-				// "&#x39;". So we implement our own replacement here.
-				if attr.Name.Space == "" {
-					fmt.Fprintf(buf, " %s=\"", attr.Name.Local)
-				} else {
-					fmt.Fprintf(buf, " %s:%s=\"", attr.Name.Space, attr.Name.Local)
+			// Resolve the element itself, as well as its attributes. We don't
+			// actually care about the attributes, but we need the stack to be
+			// informed of what namespaces are visibly used.
+			s.Get(t.Name.Space)
+			for _, attr := range t.Attr {
+				if attr.Name.Space != "xmlns" && attr.Name.Local != "xmlns" {
+					s.Get(attr.Name.Space)
 				}
-
-				val := []byte(attr.Value)
-				val = bytes.ReplaceAll(val, amp, escAmp)
-				val = bytes.ReplaceAll(val, lt, escLt)
-				val = bytes.ReplaceAll(val, gt, escGt)
-				val = bytes.ReplaceAll(val, quot, escQuot)
-				val = bytes.ReplaceAll(val, tab, escTab)
-				val = bytes.ReplaceAll(val, nl, escNl)
-				val = bytes.ReplaceAll(val, cr, escCr)
-				buf.Write(val)
-
-				fmt.Fprint(buf, "\"")
 			}
 
-			// Having processed the attributes, we now close out the tag:
-			fmt.Fprint(buf, ">")
+			// We have not previously found the root node. There are two possibilities
+			// here: this node is the root node (this needs special handling), or it
+			// isn't and so it isn't part of the node-set to canonicalize.
+			if rootNodeDepth < 0 {
+				// If we are the root node, then we will need to be rendered at the very
+				// end, because you can't render the root node without knowing the set of
+				// visibly-used namespaces, which will be determined by later tokens.
+				if isRoot {
+					// t is only valid for this iteration of the for loop, we must copy it.
+					startRootNode = t.Copy()
+
+					// Mark the depth of the stack at this point. If we are ever about pop
+					// the stack and reach this depth again, then we know we are handling
+					// the EndElement that corresponds to this StartElement.
+					rootNodeDepth = s.Len()
+				}
+			} else {
+				// The root node has already previously been found. We are in the
+				// node-set to c14n, and we are not at its root. We can render this node
+				// right away.
+				writeStartElement(&s, &buf, t, false)
+			}
 		case xml.EndElement:
 			// Continuing the part of the spec abridged in the StartElement-handling
 			// section:
@@ -155,10 +95,23 @@ func canonicalize(s *stack, buf *bytes.Buffer, d *xml.Decoder) error {
 			// and a close angle bracket.
 			//
 			// We implement that here.
+
+			// If we have not yet found the root node, do not render this.
+			if rootNodeDepth < 0 {
+				break
+			}
+
 			if t.Name.Space == "" {
-				fmt.Fprintf(buf, "</%s>", t.Name.Local)
+				fmt.Fprintf(&buf, "</%s>", t.Name.Local)
 			} else {
-				fmt.Fprintf(buf, "</%s:%s", t.Name.Space, t.Name.Local)
+				fmt.Fprintf(&buf, "</%s:%s>", t.Name.Space, t.Name.Local)
+			}
+
+			// If we are at the same depth as the root node's stack depth, then don't
+			// pop the stack at all, and instead jump to the special-case handling of
+			// startRootNode; no further nodes needed to be rendered.
+			if s.Len() == rootNodeDepth {
+				break loop
 			}
 
 			// Pop the stack of namespaces.
@@ -176,6 +129,12 @@ func canonicalize(s *stack, buf *bytes.Buffer, d *xml.Decoder) error {
 			// implement our own replacement here.
 			//
 			// Also, to clarify: #xD is usually known as "carriage return" (\r).
+
+			// If we have not yet found the root node, do not render this.
+			if rootNodeDepth < 0 {
+				break
+			}
+
 			t = bytes.ReplaceAll(t, amp, escAmp)
 			t = bytes.ReplaceAll(t, lt, escLt)
 			t = bytes.ReplaceAll(t, gt, escGt)
@@ -205,16 +164,118 @@ func canonicalize(s *stack, buf *bytes.Buffer, d *xml.Decoder) error {
 			//
 			// We implement this omission by simply checking if the target of the
 			// ProcInst is xml.
+
+			// If we have not yet found the root node, do not render this.
+			if rootNodeDepth < 0 {
+				break
+			}
+
 			if t.Target != "xml" {
-				fmt.Fprintf(buf, "<?%s", t.Target)
+				fmt.Fprintf(&buf, "<?%s", t.Target)
 				if len(t.Inst) > 0 {
 					buf.WriteByte(' ')
 				}
 				buf.Write(t.Inst)
-				fmt.Fprintf(buf, "?>")
+				fmt.Fprintf(&buf, "?>")
 			}
 		}
 	}
+
+	out := bytes.Buffer{}
+	writeStartElement(&s, &out, startRootNode, true)
+	out.Write(buf.Bytes())
+
+	return out.Bytes(), nil
+}
+
+func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, isRoot bool) {
+	if isRoot {
+		fmt.Println(s, s.Used())
+		for name, uri := range s.Used() {
+			if name == "" {
+				t.Attr = append(t.Attr, xml.Attr{
+					Name:  xml.Name{Local: "xmlns"},
+					Value: uri,
+				})
+			} else {
+				t.Attr = append(t.Attr, xml.Attr{
+					Name:  xml.Name{Space: "xmlns", Local: name},
+					Value: uri,
+				})
+			}
+		}
+	}
+
+	// Establish a sorted order of attributes using sortAttr, which implements
+	// the ordering rules of the c14n spec.
+	sortAttr := sortAttr{stack: s, attrs: t.Attr}
+	sort.Sort(sortAttr)
+
+	// Write out the element. From the spec:
+	//
+	// If the element is in the node-set, then the result is an open angle
+	// bracket (<), the element QName, the result of processing the namespace
+	// axis, the result of processing the attribute axis, a close angle
+	// bracket (>), [...]
+	//
+	// Where QName is:
+	//
+	// The QName of a node is either the local name if the namespace prefix
+	// string is empty or the namespace prefix, a colon, then the local name
+	// of the element. The namespace prefix used in the QName MUST be the same
+	// one which appeared in the input document.
+	//
+	// https://www.w3.org/TR/2001/REC-xml-c14n-20010315#ProcessingModel
+	//
+	// So here we write out '<' unconditionally, and then write out
+	// space:local if there's a space, or just local otherwise.
+	if t.Name.Space == "" {
+		fmt.Fprintf(buf, "<%s", t.Name.Local)
+	} else {
+		fmt.Fprintf(buf, "<%s:%s", t.Name.Space, t.Name.Local)
+	}
+
+	for _, attr := range sortAttr.attrs {
+		// From the spec:
+		//
+		// Attribute Nodes- a space, the node's QName, an equals sign, an open
+		// quotation mark (double quote), the modified string value, and a close
+		// quotation mark (double quote). The string value of the node is
+		// modified by replacing all ampersands (&) with &amp;, all open angle
+		// brackets (<) with &lt;, all quotation mark characters with &quot;,
+		// and the whitespace characters #x9, #xA, and #xD, with character
+		// references. The character references are written in uppercase
+		// hexadecimal with no leading zeroes (for example, #xD is represented
+		// by the character reference &#xD;).
+		//
+		// QName is already described in a comment above.
+		//
+		// https://www.w3.org/TR/2001/REC-xml-c14n-20010315#ProcessingModel
+		//
+		// xml.EscapeText does not implement this, and practice this is a
+		// significant problem because it will escape single-quotes into
+		// "&#x39;". So we implement our own replacement here.
+		if attr.Name.Space == "" {
+			fmt.Fprintf(buf, " %s=\"", attr.Name.Local)
+		} else {
+			fmt.Fprintf(buf, " %s:%s=\"", attr.Name.Space, attr.Name.Local)
+		}
+
+		val := []byte(attr.Value)
+		val = bytes.ReplaceAll(val, amp, escAmp)
+		val = bytes.ReplaceAll(val, lt, escLt)
+		val = bytes.ReplaceAll(val, gt, escGt)
+		val = bytes.ReplaceAll(val, quot, escQuot)
+		val = bytes.ReplaceAll(val, tab, escTab)
+		val = bytes.ReplaceAll(val, nl, escNl)
+		val = bytes.ReplaceAll(val, cr, escCr)
+		buf.Write(val)
+
+		fmt.Fprint(buf, "\"")
+	}
+
+	// Having processed the attributes, we now close out the tag:
+	fmt.Fprint(buf, ">")
 }
 
 // These are used in handling xml.CharData and xml.StartElement attribute
@@ -240,28 +301,8 @@ var (
 	escNl   = []byte("^#A;")
 )
 
-type stack []map[string]string
-
-func (s *stack) Push(t map[string]string) {
-	*s = append(*s, t)
-}
-
-func (s *stack) Pop() {
-	*s = (*s)[:len(*s)-1]
-}
-
-func (s *stack) Get(n string) string {
-	for i := len(*s) - 1; i >= 0; i-- {
-		if v, ok := (*s)[i][n]; ok {
-			return v
-		}
-	}
-
-	return ""
-}
-
 type sortAttr struct {
-	stack *stack
+	stack *stack.Stack
 	attrs []xml.Attr
 }
 
