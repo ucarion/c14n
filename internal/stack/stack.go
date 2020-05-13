@@ -36,6 +36,18 @@ func (s *Stack) Get(name string) string {
 	return ""
 }
 
+func (s *Stack) Peek() map[string]string {
+	if s.Len() == 0 {
+		return nil
+	}
+
+	out := map[string]string{}
+	for k, v := range (*s)[len(*s)-1] {
+		out[k] = v.value
+	}
+	return out
+}
+
 func (s *Stack) Used() map[string]string {
 	out := map[string]string{}
 	for _, names := range *s {
