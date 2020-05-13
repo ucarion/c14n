@@ -27,6 +27,8 @@ loop:
 			return nil, err
 		}
 
+		// fmt.Printf("%#v\n", token)
+
 		switch t := token.(type) {
 		case xml.StartElement:
 			// First, process the name declarations provided in this element. We will
@@ -55,36 +57,32 @@ loop:
 			// to canonicalize.
 			s.Push(names)
 
-			// Resolve the element itself, as well as its attributes. We don't
-			// actually care about the attributes, but we need the stack to be
-			// informed of what namespaces are visibly used.
-			s.Get(t.Name.Space)
-			for _, attr := range t.Attr {
-				if attr.Name.Space != "xmlns" && attr.Name.Local != "xmlns" {
-					s.Get(attr.Name.Space)
+			// If we are part of the node-set, we need to resolve the element and all
+			// of its attributes. We don't actually care about the attributes, but we
+			// need the stack to be informed of what namespaces are visibly used.
+			if isRoot || rootNodeDepth >= 0 {
+				s.Get(t.Name.Space)
+				for _, attr := range t.Attr {
+					if attr.Name.Space != "xmlns" && attr.Name.Local != "xmlns" {
+						s.Get(attr.Name.Space)
+					}
 				}
 			}
 
-			// We have not previously found the root node. There are two possibilities
-			// here: this node is the root node (this needs special handling), or it
-			// isn't and so it isn't part of the node-set to canonicalize.
-			if rootNodeDepth < 0 {
-				// If we are the root node, then we will need to be rendered at the very
-				// end, because you can't render the root node without knowing the set of
-				// visibly-used namespaces, which will be determined by later tokens.
-				if isRoot {
-					// t is only valid for this iteration of the for loop, we must copy it.
-					startRootNode = t.Copy()
+			// If we are the root node, then we will need to be rendered at the very
+			// end, because you can't render the root node without knowing the set of
+			// visibly-used namespaces, which will be determined by later tokens.
+			if isRoot {
+				// t is only valid for this iteration of the for loop, we must copy it.
+				startRootNode = t.Copy()
 
-					// Mark the depth of the stack at this point. If we are ever about pop
-					// the stack and reach this depth again, then we know we are handling
-					// the EndElement that corresponds to this StartElement.
-					rootNodeDepth = s.Len()
-				}
-			} else {
-				// The root node has already previously been found. We are in the
-				// node-set to c14n, and we are not at its root. We can render this node
-				// right away.
+				// Mark the depth of the stack at this point. If we are ever about pop
+				// the stack and reach this depth again, then we know we are handling
+				// the EndElement that corresponds to this StartElement.
+				rootNodeDepth = s.Len()
+			} else if rootNodeDepth >= 0 {
+				// If we are not the root node, but we are in the node-set to
+				// canonicalize, then we render ourselves immediately.
 				writeStartElement(&s, &buf, t, false)
 			}
 		case xml.EndElement:
@@ -190,19 +188,27 @@ loop:
 
 func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, isRoot bool) {
 	if isRoot {
-		fmt.Println(s, s.Used())
+		existing := s.Peek()
 		for name, uri := range s.Used() {
+			// Don't re-insert namespace declarations that are already on this node.
+			if _, ok := existing[name]; ok {
+				continue
+			}
+
+			var attr xml.Attr
 			if name == "" {
-				t.Attr = append(t.Attr, xml.Attr{
+				attr = xml.Attr{
 					Name:  xml.Name{Local: "xmlns"},
 					Value: uri,
-				})
+				}
 			} else {
-				t.Attr = append(t.Attr, xml.Attr{
+				attr = xml.Attr{
 					Name:  xml.Name{Space: "xmlns", Local: name},
 					Value: uri,
-				})
+				}
 			}
+
+			t.Attr = append(t.Attr, attr)
 		}
 	}
 
@@ -236,6 +242,28 @@ func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, is
 	}
 
 	for _, attr := range sortAttr.attrs {
+		// There's a special case when we are dealing with xmlns="". From the
+		// spec:
+		//
+		// When canonicalizing the namespace axis of an element E that is in
+		// the node-set, output xmlns="" if and only if all of the conditions
+		// are met:
+		//
+		// E visibly utilizes the default namespace (i.e., it has no namespace
+		// prefix), and
+		//
+		// it has no default namespace node in the node-set, and
+		//
+		// the nearest output ancestor of E that visibly utilizes the default
+		// namespace has a default namespace node in the node-set.
+		//
+		// We implement such logic by seeing if looking up the default
+		// namespace in the stack gives us back something that's different
+		// from
+		if attr.Name.Space == "xmlns" && attr.Name.Local == "xmlns" && attr.Value == "" {
+
+		}
+
 		// From the spec:
 		//
 		// Attribute Nodes- a space, the node's QName, an equals sign, an open
@@ -264,7 +292,6 @@ func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, is
 		val := []byte(attr.Value)
 		val = bytes.ReplaceAll(val, amp, escAmp)
 		val = bytes.ReplaceAll(val, lt, escLt)
-		val = bytes.ReplaceAll(val, gt, escGt)
 		val = bytes.ReplaceAll(val, quot, escQuot)
 		val = bytes.ReplaceAll(val, tab, escTab)
 		val = bytes.ReplaceAll(val, nl, escNl)
@@ -296,9 +323,9 @@ var (
 	quot    = []byte("\"")
 	escQuot = []byte("&quot;")
 	tab     = []byte("\t")
-	escTab  = []byte("&#9;")
+	escTab  = []byte("&#x9;")
 	nl      = []byte("\n")
-	escNl   = []byte("^#A;")
+	escNl   = []byte("&#xA;")
 )
 
 type sortAttr struct {

@@ -1,0 +1,37 @@
+package c14n_test
+
+import (
+	"bytes"
+	"encoding/xml"
+	"fmt"
+	"io/ioutil"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/ucarion/c14n"
+	"golang.org/x/net/html/charset"
+)
+
+func TestCanonicalize(t *testing.T) {
+	entries, err := ioutil.ReadDir("tests")
+	assert.NoError(t, err)
+
+	for _, file := range entries {
+		t.Run(file.Name(), func(t *testing.T) {
+			in, err := ioutil.ReadFile(fmt.Sprintf("tests/%s/in.xml", file.Name()))
+			assert.NoError(t, err)
+
+			out, err := ioutil.ReadFile(fmt.Sprintf("tests/%s/out.xml", file.Name()))
+			assert.NoError(t, err)
+
+			decoder := xml.NewDecoder(bytes.NewReader(in))
+			decoder.CharsetReader = charset.NewReaderLabel
+
+			actual, err := c14n.Canonicalize("root", decoder)
+			assert.NoError(t, err)
+			assert.Equal(t, out, actual)
+
+			fmt.Println(string(actual))
+		})
+	}
+}
