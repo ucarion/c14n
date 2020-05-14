@@ -60,3 +60,18 @@ func (s *Stack) Used() map[string]string {
 
 	return out
 }
+
+func (s *Stack) IsEffective(name string) bool {
+	// found := false
+	val := ""
+	for i := 0; i < len(*s)-1; i++ {
+		if v, ok := (*s)[i][name]; ok {
+			// found = true
+			val = v.value
+		}
+	}
+
+	// fmt.Println("effective compare", found, (*s)[len(*s)-1][name].value, val)
+	// return !found || (*s)[len(*s)-1][name].value != val
+	return (*s)[len(*s)-1][name].value != val
+}

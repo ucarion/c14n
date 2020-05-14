@@ -27,8 +27,6 @@ loop:
 			return nil, err
 		}
 
-		// fmt.Printf("%#v\n", token)
-
 		switch t := token.(type) {
 		case xml.StartElement:
 			// First, process the name declarations provided in this element. We will
@@ -43,7 +41,7 @@ loop:
 				if attr.Name.Space == "xmlns" {
 					names[attr.Name.Local] = attr.Value
 				} else if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
-					names[attr.Value] = ""
+					names[""] = attr.Value
 				}
 
 				if attr.Name.Local == "ID" && attr.Value == id {
@@ -186,6 +184,10 @@ loop:
 	return out.Bytes(), nil
 }
 
+// TODO: Can I refactor this so that instead of checking both Used and
+// IsEffective, I instead replace all of the namespace attrs on this node with
+// those that are in Used "immediately" (i.e. not inherited from parents)?
+
 func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, isRoot bool) {
 	if isRoot {
 		existing := s.Peek()
@@ -212,29 +214,28 @@ func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, is
 		}
 	}
 
-	// Establish a sorted order of attributes using sortAttr, which implements
-	// the ordering rules of the c14n spec.
+	// Establish a sorted order of attributes using sortAttr, which implements the
+	// ordering rules of the c14n spec.
 	sortAttr := sortAttr{stack: s, attrs: t.Attr}
 	sort.Sort(sortAttr)
 
 	// Write out the element. From the spec:
 	//
-	// If the element is in the node-set, then the result is an open angle
-	// bracket (<), the element QName, the result of processing the namespace
-	// axis, the result of processing the attribute axis, a close angle
-	// bracket (>), [...]
+	// If the element is in the node-set, then the result is an open angle bracket
+	// (<), the element QName, the result of processing the namespace axis, the
+	// result of processing the attribute axis, a close angle bracket (>), [...]
 	//
 	// Where QName is:
 	//
-	// The QName of a node is either the local name if the namespace prefix
-	// string is empty or the namespace prefix, a colon, then the local name
-	// of the element. The namespace prefix used in the QName MUST be the same
-	// one which appeared in the input document.
+	// The QName of a node is either the local name if the namespace prefix string
+	// is empty or the namespace prefix, a colon, then the local name of the
+	// element. The namespace prefix used in the QName MUST be the same one which
+	// appeared in the input document.
 	//
 	// https://www.w3.org/TR/2001/REC-xml-c14n-20010315#ProcessingModel
 	//
-	// So here we write out '<' unconditionally, and then write out
-	// space:local if there's a space, or just local otherwise.
+	// So here we write out '<' unconditionally, and then write out space:local if
+	// there's a space, or just local otherwise.
 	if t.Name.Space == "" {
 		fmt.Fprintf(buf, "<%s", t.Name.Local)
 	} else {
@@ -242,47 +243,31 @@ func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, is
 	}
 
 	for _, attr := range sortAttr.attrs {
-		// There's a special case when we are dealing with xmlns="". From the
-		// spec:
-		//
-		// When canonicalizing the namespace axis of an element E that is in
-		// the node-set, output xmlns="" if and only if all of the conditions
-		// are met:
-		//
-		// E visibly utilizes the default namespace (i.e., it has no namespace
-		// prefix), and
-		//
-		// it has no default namespace node in the node-set, and
-		//
-		// the nearest output ancestor of E that visibly utilizes the default
-		// namespace has a default namespace node in the node-set.
-		//
-		// We implement such logic by seeing if looking up the default
-		// namespace in the stack gives us back something that's different
-		// from
-		if attr.Name.Space == "xmlns" && attr.Name.Local == "xmlns" && attr.Value == "" {
-
+		fmt.Println("eff?", t.Name.Local, attr.Name.Local, s, s.IsEffective(attr.Name.Space))
+		if attr.Name.Local == "xmlns" && !s.IsEffective(attr.Name.Space) {
+			continue
+		} else if attr.Name.Local == "xmlns" && attr.Name.Space == "" && !s.IsEffective("") {
+			continue
 		}
 
 		// From the spec:
 		//
 		// Attribute Nodes- a space, the node's QName, an equals sign, an open
 		// quotation mark (double quote), the modified string value, and a close
-		// quotation mark (double quote). The string value of the node is
-		// modified by replacing all ampersands (&) with &amp;, all open angle
-		// brackets (<) with &lt;, all quotation mark characters with &quot;,
-		// and the whitespace characters #x9, #xA, and #xD, with character
-		// references. The character references are written in uppercase
-		// hexadecimal with no leading zeroes (for example, #xD is represented
-		// by the character reference &#xD;).
+		// quotation mark (double quote). The string value of the node is modified
+		// by replacing all ampersands (&) with &amp;, all open angle brackets (<)
+		// with &lt;, all quotation mark characters with &quot;, and the whitespace
+		// characters #x9, #xA, and #xD, with character references. The character
+		// references are written in uppercase hexadecimal with no leading zeroes
+		// (for example, #xD is represented by the character reference &#xD;).
 		//
 		// QName is already described in a comment above.
 		//
 		// https://www.w3.org/TR/2001/REC-xml-c14n-20010315#ProcessingModel
 		//
 		// xml.EscapeText does not implement this, and practice this is a
-		// significant problem because it will escape single-quotes into
-		// "&#x39;". So we implement our own replacement here.
+		// significant problem because it will escape single-quotes into "&#x39;".
+		// So we implement our own replacement here.
 		if attr.Name.Space == "" {
 			fmt.Fprintf(buf, " %s=\"", attr.Name.Local)
 		} else {
