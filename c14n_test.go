@@ -30,8 +30,6 @@ func TestCanonicalize(t *testing.T) {
 			actual, err := c14n.Canonicalize("root", decoder)
 			assert.NoError(t, err)
 			assert.Equal(t, out, actual)
-
-			fmt.Println(string(actual))
 		})
 	}
 }

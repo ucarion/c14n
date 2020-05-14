@@ -185,8 +185,25 @@ loop:
 }
 
 func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, isRoot bool) {
-	// Copy over any namespace attribute that is visibly used from this level in
-	// the stack, as well as all non-namespace attributes.
+	// From the exclusive c14n spec, which differs here from ordinary c14n spec:
+	//
+	// A namespace node N with a prefix that does not appear in the
+	// InclusiveNamespaces PrefixList is rendered if all of the conditions are
+	// met:
+	//
+	// Its parent element is in the node-set, and
+	//
+	// it is visibly utilized by its parent element, and
+	//
+	// the prefix has not yet been rendered by any output ancestor, or the nearest
+	// output ancestor of its parent element that visibly utilizes the namespace
+	// prefix does not have a namespace node in the node-set with the same
+	// namespace prefix and value as N.
+	//
+	// (https://www.w3.org/TR/xml-exc-c14n/)
+	//
+	// We implement this by copying over any namespace attribute that is visibly
+	// used from this level in the stack, as well as all non-namespace attributes.
 	used := s.Used()
 	attrs := []xml.Attr{}
 	for _, attr := range t.Attr {
@@ -225,6 +242,9 @@ func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, is
 	//
 	// So here we write out '<' unconditionally, and then write out space:local if
 	// there's a space, or just local otherwise.
+	//
+	// We do not here implement the more complex rules for handling the default
+	// namespace.
 	if t.Name.Space == "" {
 		fmt.Fprintf(buf, "<%s", t.Name.Local)
 	} else {
