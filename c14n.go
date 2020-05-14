@@ -184,39 +184,28 @@ loop:
 	return out.Bytes(), nil
 }
 
-// TODO: Can I refactor this so that instead of checking both Used and
-// IsEffective, I instead replace all of the namespace attrs on this node with
-// those that are in Used "immediately" (i.e. not inherited from parents)?
-
 func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, isRoot bool) {
-	if isRoot {
-		existing := s.Peek()
-		for name, uri := range s.Used() {
-			// Don't re-insert namespace declarations that are already on this node.
-			if _, ok := existing[name]; ok {
-				continue
+	// Copy over any namespace attribute that is visibly used from this level in
+	// the stack, as well as all non-namespace attributes.
+	used := s.Used()
+	attrs := []xml.Attr{}
+	for _, attr := range t.Attr {
+		if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
+			if _, ok := used[""]; ok {
+				attrs = append(attrs, attr)
 			}
-
-			var attr xml.Attr
-			if name == "" {
-				attr = xml.Attr{
-					Name:  xml.Name{Local: "xmlns"},
-					Value: uri,
-				}
-			} else {
-				attr = xml.Attr{
-					Name:  xml.Name{Space: "xmlns", Local: name},
-					Value: uri,
-				}
+		} else if attr.Name.Space == "xmlns" {
+			if _, ok := used[attr.Name.Local]; ok {
+				attrs = append(attrs, attr)
 			}
-
-			t.Attr = append(t.Attr, attr)
+		} else {
+			attrs = append(attrs, attr)
 		}
 	}
 
 	// Establish a sorted order of attributes using sortAttr, which implements the
 	// ordering rules of the c14n spec.
-	sortAttr := sortAttr{stack: s, attrs: t.Attr}
+	sortAttr := sortAttr{stack: s, attrs: attrs}
 	sort.Sort(sortAttr)
 
 	// Write out the element. From the spec:
@@ -243,13 +232,6 @@ func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, is
 	}
 
 	for _, attr := range sortAttr.attrs {
-		fmt.Println("eff?", t.Name.Local, attr.Name.Local, s, s.IsEffective(attr.Name.Space))
-		if attr.Name.Local == "xmlns" && !s.IsEffective(attr.Name.Space) {
-			continue
-		} else if attr.Name.Local == "xmlns" && attr.Name.Space == "" && !s.IsEffective("") {
-			continue
-		}
-
 		// From the spec:
 		//
 		// Attribute Nodes- a space, the node's QName, an equals sign, an open
