@@ -1,5 +1,5 @@
-<outer ID="root">
-  <a:inner xmlns:a="http://example.com">
+<outer xmlns:a="http://example.com" ID="root">
+  <a:inner>
     <a:foo></a:foo>
   </a:inner>
 </outer>

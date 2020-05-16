@@ -1,0 +1,19 @@
+<saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion" ID="root" IssueInstant="2020-05-15T20:34:27.037Z" Version="2.0">
+  <saml2:Issuer Format="urn:oasis:names:tc:SAML:2.0:nameid-format:entity">http://www.example.com</saml2:Issuer>
+  <saml2:Subject>
+    <saml2:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified">foo@example.com</saml2:NameID>
+    <saml2:SubjectConfirmation Method="urn:oasis:names:tc:SAML:2.0:cm:bearer">
+      <saml2:SubjectConfirmationData NotOnOrAfter="2020-05-15T20:39:27.037Z" Recipient="http://localhost:8080/acs"></saml2:SubjectConfirmationData>
+    </saml2:SubjectConfirmation>
+  </saml2:Subject>
+  <saml2:Conditions NotBefore="2020-05-15T20:29:27.037Z" NotOnOrAfter="2020-05-15T20:39:27.037Z">
+    <saml2:AudienceRestriction>
+      <saml2:Audience>foobar</saml2:Audience>
+    </saml2:AudienceRestriction>
+  </saml2:Conditions>
+  <saml2:AuthnStatement AuthnInstant="2020-05-15T20:33:59.121Z" SessionIndex="id1589574867035.2142172084">
+    <saml2:AuthnContext>
+      <saml2:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml2:AuthnContextClassRef>
+    </saml2:AuthnContext>
+  </saml2:AuthnStatement>
+</saml2:Assertion>

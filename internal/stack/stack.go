@@ -10,7 +10,9 @@ type entry struct {
 func (s *Stack) Push(names map[string]string) {
 	entries := make(map[string]entry, len(names))
 	for k, v := range names {
-		entries[k] = entry{value: v}
+		if s.get(false, k) != v {
+			entries[k] = entry{value: v}
+		}
 	}
 
 	*s = append(*s, entries)
@@ -25,9 +27,16 @@ func (s *Stack) Len() int {
 }
 
 func (s *Stack) Get(name string) string {
+	return s.get(true, name)
+}
+
+func (s *Stack) get(mark bool, name string) string {
 	for i := len(*s) - 1; i >= 0; i-- {
 		if v, ok := (*s)[i][name]; ok {
-			v.used = true
+			if mark {
+				v.used = true
+			}
+
 			(*s)[i][name] = v
 			return v.value
 		}

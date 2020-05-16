@@ -61,7 +61,7 @@ loop:
 			if isRoot || rootNodeDepth >= 0 {
 				s.Get(t.Name.Space)
 				for _, attr := range t.Attr {
-					if attr.Name.Space != "xmlns" && attr.Name.Local != "xmlns" {
+					if attr.Name.Space != "xmlns" && (attr.Name.Space != "" || attr.Name.Local != "xmlns") {
 						s.Get(attr.Name.Space)
 					}
 				}
@@ -205,18 +205,38 @@ func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, is
 	// We implement this by copying over any namespace attribute that is visibly
 	// used from this level in the stack, as well as all non-namespace attributes.
 	used := s.Used()
+
+	// For the special case of the root, we copy over all namespaces that are
+	// visibly used, even if they are from above the root.
+	for isRoot && s.Len() > 0 {
+		s.Pop()
+
+		for k, v := range s.Used() {
+			used[k] = v
+		}
+	}
+
+	// Remove any namespace attributes from the node. The visibly-used namespaces
+	// will determine what we output for namespace nodes.
 	attrs := []xml.Attr{}
 	for _, attr := range t.Attr {
-		if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
-			if _, ok := used[""]; ok {
-				attrs = append(attrs, attr)
-			}
-		} else if attr.Name.Space == "xmlns" {
-			if _, ok := used[attr.Name.Local]; ok {
-				attrs = append(attrs, attr)
-			}
-		} else {
+		if attr.Name.Space != "xmlns" && (attr.Name.Space != "" || attr.Name.Local != "xmlns") {
 			attrs = append(attrs, attr)
+		}
+	}
+
+	// Copy over all visibly-used namespaces into the node.
+	for name, uri := range used {
+		if name == "" {
+			attrs = append(attrs, xml.Attr{
+				Name:  xml.Name{Space: "", Local: "xmlns"},
+				Value: uri,
+			})
+		} else {
+			attrs = append(attrs, xml.Attr{
+				Name:  xml.Name{Space: "xmlns", Local: name},
+				Value: uri,
+			})
 		}
 	}
 
