@@ -18,18 +18,40 @@ func TestCanonicalize(t *testing.T) {
 
 	for _, file := range entries {
 		t.Run(file.Name(), func(t *testing.T) {
-			in, err := ioutil.ReadFile(fmt.Sprintf("tests/%s/in.xml", file.Name()))
-			assert.NoError(t, err)
+			t.Run("with id", func(t *testing.T) {
+				in, err := ioutil.ReadFile(fmt.Sprintf("tests/%s/in.xml", file.Name()))
+				assert.NoError(t, err)
 
-			out, err := ioutil.ReadFile(fmt.Sprintf("tests/%s/out.xml", file.Name()))
-			assert.NoError(t, err)
+				out, err := ioutil.ReadFile(fmt.Sprintf("tests/%s/out.xml", file.Name()))
+				assert.NoError(t, err)
 
-			decoder := xml.NewDecoder(bytes.NewReader(in))
-			decoder.CharsetReader = charset.NewReaderLabel
+				decoder := xml.NewDecoder(bytes.NewReader(in))
+				decoder.CharsetReader = charset.NewReaderLabel
 
-			actual, err := c14n.Canonicalize("root", decoder)
-			assert.NoError(t, err)
-			assert.Equal(t, out, actual)
+				actual, err := c14n.Canonicalize("root", decoder)
+				assert.NoError(t, err)
+				assert.Equal(t, out, actual)
+			})
+
+			// Aside from these two test-cases, all of our tests canonicalize a
+			// root-level element. So we can reuse most of our test cases to verify
+			// whether passing an empty string as ID also works.
+			if file.Name() != "wrapped" && file.Name() != "inherited" {
+				t.Run("without id", func(t *testing.T) {
+					in, err := ioutil.ReadFile(fmt.Sprintf("tests/%s/in.xml", file.Name()))
+					assert.NoError(t, err)
+
+					out, err := ioutil.ReadFile(fmt.Sprintf("tests/%s/out.xml", file.Name()))
+					assert.NoError(t, err)
+
+					decoder := xml.NewDecoder(bytes.NewReader(in))
+					decoder.CharsetReader = charset.NewReaderLabel
+
+					actual, err := c14n.Canonicalize("", decoder)
+					assert.NoError(t, err)
+					assert.Equal(t, out, actual)
+				})
+			}
 		})
 	}
 }

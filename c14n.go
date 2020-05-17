@@ -36,7 +36,7 @@ loop:
 			// In this step, we also determine if we are working with the root of the
 			// node-set we are to canonicalize.
 			names := map[string]string{}
-			isRoot := false
+			isRoot := rootNodeDepth == -1 && id == "" // if id is "", then the first start element is the root
 			for _, attr := range t.Attr {
 				if attr.Name.Space == "xmlns" {
 					names[attr.Name.Local] = attr.Value
@@ -44,7 +44,7 @@ loop:
 					names[""] = attr.Value
 				}
 
-				if attr.Name.Local == "ID" && attr.Value == id {
+				if rootNodeDepth == -1 && attr.Name.Local == "ID" && attr.Value == id {
 					isRoot = true
 				}
 			}
