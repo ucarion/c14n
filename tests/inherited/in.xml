@@ -1,3 +1,0 @@
-<outer xmlns:a="http://example.com">
-  <a:foo ID="root" />
-</outer>

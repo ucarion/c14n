@@ -13,12 +13,11 @@ type RawTokenReader interface {
 	RawToken() (xml.Token, error)
 }
 
-func Canonicalize(id string, r RawTokenReader) ([]byte, error) {
+func Canonicalize(r RawTokenReader) ([]byte, error) {
 	var s stack.Stack
 	buf := bytes.Buffer{}
 
-	var startRootNode xml.StartElement // the start of the root node, special-cased
-	rootNodeDepth := -1                // -1 indicates that the root node is not yet found
+	var startRootNode *xml.StartElement // the start of the root node, special-cased
 
 loop:
 	for {
@@ -36,16 +35,11 @@ loop:
 			// In this step, we also determine if we are working with the root of the
 			// node-set we are to canonicalize.
 			names := map[string]string{}
-			isRoot := rootNodeDepth == -1 && id == "" // if id is "", then the first start element is the root
 			for _, attr := range t.Attr {
 				if attr.Name.Space == "xmlns" {
 					names[attr.Name.Local] = attr.Value
 				} else if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
 					names[""] = attr.Value
-				}
-
-				if rootNodeDepth == -1 && attr.Name.Local == "ID" && attr.Value == id {
-					isRoot = true
 				}
 			}
 
@@ -55,32 +49,25 @@ loop:
 			// to canonicalize.
 			s.Push(names)
 
-			// If we are part of the node-set, we need to resolve the element and all
-			// of its attributes. We don't actually care about the attributes, but we
-			// need the stack to be informed of what namespaces are visibly used.
-			if isRoot || rootNodeDepth >= 0 {
-				s.Get(t.Name.Space)
-				for _, attr := range t.Attr {
-					if attr.Name.Space != "xmlns" && (attr.Name.Space != "" || attr.Name.Local != "xmlns") {
-						s.Get(attr.Name.Space)
-					}
+			// Resolve the element and all of its attributes. We don't actually care
+			// about the attributes, but we need the stack to be informed of what
+			// namespaces are visibly used.
+			s.Get(t.Name.Space)
+			for _, attr := range t.Attr {
+				if attr.Name.Space != "xmlns" && (attr.Name.Space != "" || attr.Name.Local != "xmlns") {
+					s.Get(attr.Name.Space)
 				}
 			}
 
 			// If we are the root node, then we will need to be rendered at the very
 			// end, because you can't render the root node without knowing the set of
 			// visibly-used namespaces, which will be determined by later tokens.
-			if isRoot {
+			if startRootNode == nil {
 				// t is only valid for this iteration of the for loop, we must copy it.
-				startRootNode = t.Copy()
-
-				// Mark the depth of the stack at this point. If we are ever about pop
-				// the stack and reach this depth again, then we know we are handling
-				// the EndElement that corresponds to this StartElement.
-				rootNodeDepth = s.Len()
-			} else if rootNodeDepth >= 0 {
-				// If we are not the root node, but we are in the node-set to
-				// canonicalize, then we render ourselves immediately.
+				copyT := t.Copy()
+				startRootNode = &copyT
+			} else {
+				// If we are not the root node, then we render ourselves immediately.
 				writeStartElement(&s, &buf, t, false)
 			}
 		case xml.EndElement:
@@ -92,21 +79,16 @@ loop:
 			//
 			// We implement that here.
 
-			// If we have not yet found the root node, do not render this.
-			if rootNodeDepth < 0 {
-				break
-			}
-
 			if t.Name.Space == "" {
 				fmt.Fprintf(&buf, "</%s>", t.Name.Local)
 			} else {
 				fmt.Fprintf(&buf, "</%s:%s>", t.Name.Space, t.Name.Local)
 			}
 
-			// If we are at the same depth as the root node's stack depth, then don't
-			// pop the stack at all, and instead jump to the special-case handling of
+			// If we are about to pop back onto the root level, then don't pop the
+			// stack at all, and instead jump to the special-case handling of
 			// startRootNode; no further nodes needed to be rendered.
-			if s.Len() == rootNodeDepth {
+			if s.Len() == 1 {
 				break loop
 			}
 
@@ -126,9 +108,9 @@ loop:
 			//
 			// Also, to clarify: #xD is usually known as "carriage return" (\r).
 
-			// If we have not yet found the root node, do not render this.
-			if rootNodeDepth < 0 {
-				break
+			// Don't start rendering output until we've reached a StartElement.
+			if startRootNode == nil {
+				continue
 			}
 
 			t = bytes.ReplaceAll(t, amp, escAmp)
@@ -161,9 +143,9 @@ loop:
 			// We implement this omission by simply checking if the target of the
 			// ProcInst is xml.
 
-			// If we have not yet found the root node, do not render this.
-			if rootNodeDepth < 0 {
-				break
+			// Don't start rendering output until we've reached a StartElement.
+			if startRootNode == nil {
+				continue
 			}
 
 			if t.Target != "xml" {
@@ -178,7 +160,7 @@ loop:
 	}
 
 	out := bytes.Buffer{}
-	writeStartElement(&s, &out, startRootNode, true)
+	writeStartElement(&s, &out, *startRootNode, true)
 	out.Write(buf.Bytes())
 
 	return out.Bytes(), nil
@@ -205,16 +187,6 @@ func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, is
 	// We implement this by copying over any namespace attribute that is visibly
 	// used from this level in the stack, as well as all non-namespace attributes.
 	used := s.Used()
-
-	// For the special case of the root, we copy over all namespaces that are
-	// visibly used, even if they are from above the root.
-	for isRoot && s.Len() > 0 {
-		s.Pop()
-
-		for k, v := range s.Used() {
-			used[k] = v
-		}
-	}
 
 	// Remove any namespace attributes from the node. The visibly-used namespaces
 	// will determine what we output for namespace nodes.
