@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"sort"
 
 	"github.com/ucarion/c14n/internal/stack"
@@ -23,6 +24,10 @@ loop:
 	for {
 		token, err := r.RawToken()
 		if err != nil {
+			if err == io.EOF {
+				return nil, io.ErrUnexpectedEOF
+			}
+
 			return nil, err
 		}
 
@@ -321,8 +326,6 @@ func (s sortAttr) Swap(i, j int) {
 }
 
 func (s sortAttr) Less(i, j int) bool {
-	fmt.Println(i, j)
-
 	// Many comments in this function are copied from:
 	//
 	// https://www.w3.org/TR/2001/REC-xml-c14n-20010315#DocumentOrder

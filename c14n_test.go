@@ -3,6 +3,7 @@ package c14n_test
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -39,5 +40,18 @@ func TestCanonicalize(t *testing.T) {
 func TestCanonicalize_NoStartElement(t *testing.T) {
 	decoder := xml.NewDecoder(strings.NewReader("<!-- foo -->"))
 	_, err := c14n.Canonicalize(decoder)
-	assert.Equal(t, io.EOF, err)
+	assert.Equal(t, io.ErrUnexpectedEOF, err)
+}
+
+func TestCanonicalize_RawTokenError(t *testing.T) {
+	_, err := c14n.Canonicalize(&errRawTokener{})
+	assert.Equal(t, errDummy, err)
+}
+
+var errDummy = errors.New("dummy error")
+
+type errRawTokener struct{}
+
+func (e *errRawTokener) RawToken() (xml.Token, error) {
+	return nil, errDummy
 }
