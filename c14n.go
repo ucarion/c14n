@@ -336,7 +336,7 @@ func (s sortAttr) Less(i, j int) bool {
 	// (the default namespace node, if one exists, has no local name and is
 	// therefore lexicographically least)."
 	//
-	// It follows that the very first node the default namespace node. Let's
+	// It follows that the very first node is the default namespace node. Let's
 	// handle those first:
 	if s.attrs[i].Name.Space == "" && s.attrs[i].Name.Local == "xmlns" {
 		return true
