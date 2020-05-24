@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,4 +34,10 @@ func TestCanonicalize(t *testing.T) {
 			assert.Equal(t, out, actual)
 		})
 	}
+}
+
+func TestCanonicalize_NoStartElement(t *testing.T) {
+	decoder := xml.NewDecoder(strings.NewReader("<!-- foo -->"))
+	_, err := c14n.Canonicalize(decoder)
+	assert.Equal(t, io.EOF, err)
 }
