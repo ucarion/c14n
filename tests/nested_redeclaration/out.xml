@@ -1,0 +1,5 @@
+<root>
+  <foo xmlns:a="x">
+    <bar a:y="z"></bar>
+  </foo>
+</root>

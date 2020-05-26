@@ -16,13 +16,19 @@ type RawTokenReader interface {
 
 func Canonicalize(r RawTokenReader) ([]byte, error) {
 	var s stack.Stack
-	buf := bytes.Buffer{}
-
-	var startRootNode *xml.StartElement // the start of the root node, special-cased
+	bufs := []*bytes.Buffer{&bytes.Buffer{}}
 
 loop:
 	for {
+
+		fmt.Println("iter buf")
+		for _, buf := range bufs {
+			fmt.Printf("%#v\n", string(buf.Bytes()))
+		}
+		fmt.Println("done iter")
+
 		token, err := r.RawToken()
+		fmt.Println("token", token)
 		if err != nil {
 			if err == io.EOF {
 				return nil, io.ErrUnexpectedEOF
@@ -36,9 +42,6 @@ loop:
 			// First, process the name declarations provided in this element. We will
 			// need these in order to determine the appropriate namespace URI for a
 			// particular local name.
-			//
-			// In this step, we also determine if we are working with the root of the
-			// node-set we are to canonicalize.
 			names := map[string]string{}
 			for _, attr := range t.Attr {
 				if attr.Name.Space == "xmlns" {
@@ -52,7 +55,7 @@ loop:
 			// these names in order to determine their attribute sort order,
 			// regardless of whether this particular element is part of the node-set
 			// to canonicalize.
-			s.Push(names)
+			s.Push(t.Copy(), names)
 
 			// Resolve the element and all of its attributes. We don't actually care
 			// about the attributes, but we need the stack to be informed of what
@@ -60,21 +63,26 @@ loop:
 			s.Get(t.Name.Space)
 			for _, attr := range t.Attr {
 				if attr.Name.Space != "xmlns" && (attr.Name.Space != "" || attr.Name.Local != "xmlns") {
+					fmt.Println("get", t, attr.Name.Space)
 					s.Get(attr.Name.Space)
 				}
 			}
 
-			// If we are the root node, then we will need to be rendered at the very
-			// end, because you can't render the root node without knowing the set of
-			// visibly-used namespaces, which will be determined by later tokens.
-			if startRootNode == nil {
-				// t is only valid for this iteration of the for loop, we must copy it.
-				copyT := t.Copy()
-				startRootNode = &copyT
-			} else {
-				// If we are not the root node, then we render ourselves immediately.
-				writeStartElement(&s, &buf, t, false)
-			}
+			bufs = append(bufs, &bytes.Buffer{})
+
+			// startNodes = append(startNodes, t.Copy())
+
+			// // If we are the root node, then we will need to be rendered at the very
+			// // end, because you can't render the root node without knowing the set of
+			// // visibly-used namespaces, which will be determined by later tokens.
+			// if startRootNode == nil {
+			// 	// t is only valid for this iteration of the for loop, we must copy it.
+			// 	copyT := t.Copy()
+			// 	startRootNode = &copyT
+			// } else {
+			// 	// If we are not the root node, then we render ourselves immediately.
+			// 	writeStartElement(&s, &buf, t)
+			// }
 		case xml.EndElement:
 			// Continuing the part of the spec abridged in the StartElement-handling
 			// section:
@@ -84,21 +92,32 @@ loop:
 			//
 			// We implement that here.
 
+			buf := bufs[len(bufs)-1]
 			if t.Name.Space == "" {
-				fmt.Fprintf(&buf, "</%s>", t.Name.Local)
+				fmt.Fprintf(buf, "</%s>", t.Name.Local)
 			} else {
-				fmt.Fprintf(&buf, "</%s:%s>", t.Name.Space, t.Name.Local)
+				fmt.Fprintf(buf, "</%s:%s>", t.Name.Space, t.Name.Local)
 			}
 
-			// If we are about to pop back onto the root level, then don't pop the
-			// stack at all, and instead jump to the special-case handling of
-			// startRootNode; no further nodes needed to be rendered.
-			if s.Len() == 1 {
-				break loop
-			}
+			// // If we are about to pop back onto the root level, then don't pop the
+			// // stack at all, and instead jump to the special-case handling of
+			// // startRootNode; no further nodes needed to be rendered.
+			// if s.Len() == 1 {
+			// 	break loop
+			// }
 
 			// Pop the stack of namespaces.
+			startToken := s.PeekToken()
+			writeStartElement(&s, bufs[len(bufs)-2], startToken, s.Used())
+			bufs[len(bufs)-2].Write(bufs[len(bufs)-1].Bytes())
+			bufs = bufs[:len(bufs)-1]
+			// buf bufs[len(bufs) - 1]
+
 			s.Pop()
+
+			if s.Len() == 0 {
+				break loop
+			}
 		case xml.CharData:
 			// From the spec:
 			//
@@ -114,7 +133,7 @@ loop:
 			// Also, to clarify: #xD is usually known as "carriage return" (\r).
 
 			// Don't start rendering output until we've reached a StartElement.
-			if startRootNode == nil {
+			if s.Len() == 0 {
 				continue
 			}
 
@@ -123,6 +142,7 @@ loop:
 			t = bytes.ReplaceAll(t, gt, escGt)
 			t = bytes.ReplaceAll(t, cr, escCr)
 
+			buf := bufs[len(bufs)-1]
 			buf.Write(t)
 		case xml.ProcInst:
 			// From the spec:
@@ -149,29 +169,34 @@ loop:
 			// ProcInst is xml.
 
 			// Don't start rendering output until we've reached a StartElement.
-			if startRootNode == nil {
+			if s.Len() == 0 {
 				continue
 			}
 
 			if t.Target != "xml" {
-				fmt.Fprintf(&buf, "<?%s", t.Target)
+				buf := bufs[len(bufs)-1]
+				fmt.Fprintf(buf, "<?%s", t.Target)
 				if len(t.Inst) > 0 {
 					buf.WriteByte(' ')
 				}
 				buf.Write(t.Inst)
-				fmt.Fprintf(&buf, "?>")
+				fmt.Fprintf(buf, "?>")
 			}
 		}
 	}
 
 	out := bytes.Buffer{}
-	writeStartElement(&s, &out, *startRootNode, true)
-	out.Write(buf.Bytes())
+	for _, buf := range bufs {
+		out.Write(buf.Bytes())
+	}
+
+	// writeStartElement(&s, &out, *startRootNode)
+	// out.Write(buf.Bytes())
 
 	return out.Bytes(), nil
 }
 
-func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, isRoot bool) {
+func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, used map[string]string) {
 	// From the exclusive c14n spec, which differs here from ordinary c14n spec:
 	//
 	// A namespace node N with a prefix that does not appear in the
@@ -191,7 +216,9 @@ func writeStartElement(s *stack.Stack, buf *bytes.Buffer, t xml.StartElement, is
 	//
 	// We implement this by copying over any namespace attribute that is visibly
 	// used from this level in the stack, as well as all non-namespace attributes.
-	used := s.Used()
+	// used := s.Used()
+
+	fmt.Println(t, "used", used)
 
 	// Remove any namespace attributes from the node. The visibly-used namespaces
 	// will determine what we output for namespace nodes.
