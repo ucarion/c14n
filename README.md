@@ -69,5 +69,5 @@ it errors out), so this package would need to ship an alternative to
 `xml.Decoder`.
 
 Thus, this package does not support custom entities and other features driven by
-processing directives. In practice, these feature are rarely used in common
+processing directives. In practice, these features are rarely used in common
 protocols like SAML.
