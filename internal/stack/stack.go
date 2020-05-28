@@ -1,11 +1,17 @@
 package stack
 
+// Stack is a stack of XML namespace declarations.
 type Stack []map[string]string
 
+// Push pushes a set of names and their corresponding URIs to the top of the
+// stack.
 func (s *Stack) Push(names map[string]string) {
 	*s = append(*s, names)
 }
 
+// Get fetches the URI for a name (or the empth string if not found) and whether
+// the name was found at all. Definitions closer to the top of the stack take
+// predence over values further from the top.
 func (s *Stack) Get(name string) (string, bool) {
 	for i := len(*s) - 1; i >= 0; i-- {
 		if uri, ok := (*s)[i][name]; ok {
@@ -16,14 +22,19 @@ func (s *Stack) Get(name string) (string, bool) {
 	return "", false
 }
 
+// Pop pops the top of the name stack.
 func (s *Stack) Pop() {
 	(*s) = (*s)[:len(*s)-1]
 }
 
+// Len returns depth of the stack.
 func (s *Stack) Len() int {
 	return len(*s)
 }
 
+// GetAll returns all names in the stack, and their current values. Definitions
+// closer to the top of the stack take predence over values further from the
+// top.
 func (s *Stack) GetAll() map[string]string {
 	out := map[string]string{}
 	for _, names := range *s {
@@ -34,72 +45,3 @@ func (s *Stack) GetAll() map[string]string {
 
 	return out
 }
-
-// type Stack []tokenNames
-
-// type tokenNames struct {
-// 	token xml.StartElement
-// 	names map[string]entry
-// }
-
-// type entry struct {
-// 	value string
-// 	used  bool
-// }
-
-// func (s *Stack) Push(token xml.StartElement, names map[string]string) {
-// 	entries := make(map[string]entry, len(names))
-// 	for k, v := range names {
-// 		if s.get(false, k) != v {
-// 			entries[k] = entry{value: v}
-// 		}
-// 	}
-
-// 	*s = append(*s, tokenNames{token: token, names: entries})
-// }
-
-// func (s *Stack) PeekToken() xml.StartElement {
-// 	return (*s)[len(*s)-1].token
-// }
-
-// func (s *Stack) Pop() {
-// 	*s = (*s)[:len(*s)-1]
-// }
-
-// func (s *Stack) Len() int {
-// 	return len(*s)
-// }
-
-// func (s *Stack) Get(name string) string {
-// 	return s.get(true, name)
-// }
-
-// func (s *Stack) get(mark bool, name string) string {
-// 	for i := len(*s) - 1; i >= 0; i-- {
-// 		if v, ok := (*s)[i].names[name]; ok {
-// 			if mark {
-// 				v.used = true
-// 			}
-
-// 			(*s)[i].names[name] = v
-// 			return v.value
-// 		}
-// 	}
-
-// 	return ""
-// }
-
-// func (s *Stack) Used() map[string]string {
-// 	out := map[string]string{}
-// 	if len(*s) == 0 {
-// 		return out
-// 	}
-
-// 	for k, v := range (*s)[len(*s)-1].names {
-// 		if v.used {
-// 			out[k] = v.value
-// 		}
-// 	}
-
-// 	return out
-// }

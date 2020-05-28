@@ -1,3 +1,7 @@
+// Package c14n implements Exclusive Canonical XML canonicalization (commonly
+// abbbreviated "c14n").
+//
+// https://www.w3.org/TR/xml-exc-c14n/
 package c14n
 
 import (
@@ -11,20 +15,35 @@ import (
 	"github.com/ucarion/c14n/internal/stack"
 )
 
+// RawTokenReader is similar to xml.TokenReader, but is expected to return
+// tokens whose namespaces are not automatically resolved.
+//
+// xml.Decoder implements this interface and complies with its contract.
 type RawTokenReader interface {
+	// RawToken returns the next raw token in the reader, or an error. RawToken
+	// must not return a token and an error simultaneously.
 	RawToken() (xml.Token, error)
 }
 
+// Canonicalize returns the canonicalized representation of a sequence of raw
+// XML tokens. In particular, it implements Exclusive Canonical XML, the
+// recommended canonicalization scheme for the SAML protocol.
+//
+// Canonicalize will render the first root-level attribute in the input token
+// sequence. Any leading character data, comments, or directives will be
+// skipped.
+//
+// The input stream is not checked for correctness. Canonicalize's behavior is
+// undefined if given unbalanced tokens or other incorrect XML input.
 func Canonicalize(r RawTokenReader) ([]byte, error) {
-	var knownNames stack.Stack
-	var renderedNames stack.Stack
-	var buf bytes.Buffer
+	var knownNames stack.Stack    // a mapping of all declared namespaces in the input
+	var renderedNames stack.Stack // a mapping of all declared namespaces in the output
+	var buf bytes.Buffer          // the output buffer
 
 	for {
 		t, err := r.RawToken()
 		if err != nil {
 			if err == io.EOF {
-				fmt.Println(string(buf.Bytes()))
 				return nil, io.ErrUnexpectedEOF
 			}
 
@@ -33,8 +52,8 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 
 		switch t := t.(type) {
 		case xml.StartElement:
-			names := map[string]string{}
-			visiblyUsedNames := map[string]struct{}{}
+			names := map[string]string{}              // the names declared by this element
+			visiblyUsedNames := map[string]struct{}{} // the names visibly used by this element
 
 			visiblyUsedNames[t.Name.Space] = struct{}{}
 			for _, attr := range t.Attr {
@@ -45,20 +64,52 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 				}
 			}
 
+			// Note the previous value of the default namespace. This needs to be
+			// special-cased because the c14n spec special-cases the case of xmlns="".
 			previousDefaultNamespace, _ := knownNames.Get("")
+
+			// Push all the names declared by this element onto the input stack. We
+			// will use this to determine what namespaces to put on the output stack.
 			knownNames.Push(names)
 
-			namesToRender := map[string]struct{}{}
+			namesToRender := map[string]struct{}{} // namespaces we will want to output
 			for name, uri := range knownNames.GetAll() {
 				shouldRender := false
 
+				// xmlns="" is special-cased.
 				if name == "" && uri == "" {
+					// Per the spec, from the non-normative but clearer "constrained
+					// implementation":
+					//
+					// Render xmlns="" if and only if all of the conditions are met:
+					//
+					// The default namespace is visibly utilized by the immediate parent
+					// element node, or the default prefix token is present in
+					// InclusiveNamespaces PrefixList, and
+					//
+					// the element does not have a namespace node in the node-set
+					// declaring a value for the default namespace, and
+					//
+					// the default namespace prefix is present in the dictionary
+					// ns_rendered.
+					//
+					// ns_rendered corresponds to renderedNames in this code.
 					_, visiblyUsed := visiblyUsedNames[""]
 					declaredValue, declared := names[""]
 					_, rendered := renderedNames.Get("")
 
 					shouldRender = visiblyUsed && (!declared || declaredValue != previousDefaultNamespace) && rendered
 				} else {
+					// Again from the spec:
+					//
+					// Render each namespace node if and only if all of the conditions are
+					// met:
+					//
+					// it is visibly utilized by the immediate parent element or one of
+					// its attributes, or is present in InclusiveNamespaces PrefixList,
+					// and
+					//
+					// its prefix and value do not appear in ns_rendered.
 					_, visiblyUsed := visiblyUsedNames[name]
 					renderedValue, rendered := renderedNames.Get(name)
 
@@ -70,13 +121,18 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 				}
 			}
 
+			// attrsToRender is the set of attributes we'll render. The order doesn't
+			// matter yet, we'll sort them later.
 			attrsToRender := []xml.Attr{}
 			for _, attr := range t.Attr {
+				// Render all non-namespace ndoes.
 				if _, ok := getNamespace(attr); !ok {
 					attrsToRender = append(attrsToRender, attr)
 				}
 			}
 
+			// renderedNameValues contains the names we're going to render, in a
+			// format we can push onto renderedNames.
 			renderedNameValues := map[string]string{}
 			for name := range namesToRender {
 				uri, _ := knownNames.Get(name)
@@ -97,8 +153,8 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 
 			renderedNames.Push(renderedNameValues)
 
-			// Establish a sorted order of attributes using sortAttr, which implements the
-			// ordering rules of the c14n spec.
+			// Establish a sorted order of attributes using SortAttr, which implements
+			// the ordering rules of the c14n spec.
 			sortAttr := sortattr.SortAttr{Stack: &knownNames, Attrs: attrsToRender}
 			sort.Sort(sortAttr)
 
@@ -256,6 +312,8 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 	}
 }
 
+// getNamespace gets the namespace declared by this attribute, and whether it's
+// a namespace-declaring attribute.
 func getNamespace(attr xml.Attr) (string, bool) {
 	if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
 		return "", true
@@ -271,18 +329,14 @@ func getNamespace(attr xml.Attr) (string, bool) {
 // These are used in handling xml.CharData and xml.StartElement attribute
 // values.
 var (
-	amp    = []byte("&")
-	escAmp = []byte("&amp;")
-	lt     = []byte("<")
-	escLt  = []byte("&lt;")
-	gt     = []byte(">")
-	escGt  = []byte("&gt;")
-	cr     = []byte("\r")
-	escCr  = []byte("&#xD;")
-)
-
-// These are used exclusively in handling xml.StartElement attribute values.
-var (
+	amp     = []byte("&")
+	escAmp  = []byte("&amp;")
+	lt      = []byte("<")
+	escLt   = []byte("&lt;")
+	gt      = []byte(">")
+	escGt   = []byte("&gt;")
+	cr      = []byte("\r")
+	escCr   = []byte("&#xD;")
 	quot    = []byte("\"")
 	escQuot = []byte("&quot;")
 	tab     = []byte("\t")

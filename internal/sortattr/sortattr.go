@@ -6,19 +6,23 @@ import (
 	"github.com/ucarion/c14n/internal/stack"
 )
 
+// SortAttr can sort attributes in compliance with the c14n specification.
 type SortAttr struct {
 	Stack *stack.Stack
 	Attrs []xml.Attr
 }
 
+// Len implements Sort.
 func (s SortAttr) Len() int {
 	return len(s.Attrs)
 }
 
+// Swap implements Sort.
 func (s SortAttr) Swap(i, j int) {
 	s.Attrs[i], s.Attrs[j] = s.Attrs[j], s.Attrs[i]
 }
 
+// Less implements Sort.
 func (s SortAttr) Less(i, j int) bool {
 	// Many comments in this function are copied from:
 	//
