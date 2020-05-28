@@ -15,6 +15,15 @@ import (
 	"golang.org/x/net/html/charset"
 )
 
+func ExampleCanonicalize() {
+	input := `<foo z="2" a="1"><bar /></foo>`
+	decoder := xml.NewDecoder(strings.NewReader(input))
+	out, err := c14n.Canonicalize(decoder)
+	fmt.Println(string(out), err)
+	// Output:
+	// <foo a="1" z="2"><bar></bar></foo> <nil>
+}
+
 func TestCanonicalize(t *testing.T) {
 	entries, err := ioutil.ReadDir("tests")
 	assert.NoError(t, err)
