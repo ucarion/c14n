@@ -35,3 +35,39 @@ fmt.Println(string(out), err)
 // Output:
 // <foo a="1" z="2"><bar></bar></foo> <nil>
 ```
+
+## Limitations
+
+This package ignores processing directives, and so technically does not fully
+comply with the Exclusive Canonical XML spec. In particular, the spec says that
+if you have a document like this:
+
+```xml
+<!DOCTYPE doc [
+<!ENTITY ent1 "Hello">
+<!ENTITY ent2 SYSTEM "world.txt">
+]>
+<doc attrExtEnt="entExt">
+   &ent1;, &ent2;!
+</doc>
+
+<!-- Assume world.txt contains "world" (excluding the quotes) -->
+```
+
+Then it should be canonicalized as:
+
+```xml
+<doc attrExtEnt="entExt">
+   Hello, world!
+</doc>
+```
+
+But in order to do that, this package would need to potentially do I/O in order
+to work, and it would need to understand the entire DTD spec. Furthermore, the
+standard library's XML decoder doesn't support parsing custom entities (instead,
+it errors out), so this package would need to ship an alternative to
+`xml.Decoder`.
+
+Thus, this package does not support custom entities and other features driven by
+processing directives. In practice, these feature are rarely used in common
+protocols like SAML.
