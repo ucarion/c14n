@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 
+	"github.com/ucarion/c14n/internal/sortattr"
 	"github.com/ucarion/c14n/internal/stack"
 )
 
@@ -56,8 +57,6 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 					declaredValue, declared := names[""]
 					_, rendered := renderedNames.Get("")
 
-					// fmt.Println("visiblyUsed", visiblyUsed, "declared", declared, "rendered", rendered)
-
 					shouldRender = visiblyUsed && (!declared || declaredValue != previousDefaultNamespace) && rendered
 				} else {
 					_, visiblyUsed := visiblyUsedNames[name]
@@ -70,30 +69,6 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 					namesToRender[name] = struct{}{}
 				}
 			}
-
-			// namesToRender := map[string]string{}
-			// if shouldRenderName(&knownNames, &renderedNames, t.Name.Space) {
-			// 	uri, _ := knownNames.Get(t.Name.Space)
-			// 	namesToRender[t.Name.Space] = uri
-			// }
-
-			// for _, attr := range t.Attr {
-			// 	if _, ok := getNamespace(attr); !ok {
-			// 		if shouldRenderName(&knownNames, &renderedNames, attr.Name.Space) {
-			// 			uri, _ := knownNames.Get(attr.Name.Space)
-			// 			namesToRender[t.Name.Space] = uri
-			// 		}
-			// 	}
-			// }
-
-			// renderedNames.Push(namesToRender)
-
-			// attrsToRender := []xml.Attr{}
-			// for _, attr := range t.Attr {
-			// 	if _, ok := getNamespace(attr); !ok {
-			// 		attrsToRender = append(attrsToRender, attr)
-			// 	}
-			// }
 
 			attrsToRender := []xml.Attr{}
 			for _, attr := range t.Attr {
@@ -122,13 +97,9 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 
 			renderedNames.Push(renderedNameValues)
 
-			// fmt.Println("name", t.Name.Local, "visiblyUsedNames", visiblyUsedNames, "namesToRender", namesToRender)
-			// fmt.Println("knownNames", knownNames)
-			// fmt.Println("renderedNames", renderedNames)
-
 			// Establish a sorted order of attributes using sortAttr, which implements the
 			// ordering rules of the c14n spec.
-			sortAttr := sortAttr{stack: &knownNames, attrs: attrsToRender}
+			sortAttr := sortattr.SortAttr{Stack: &knownNames, Attrs: attrsToRender}
 			sort.Sort(sortAttr)
 
 			// Write out the element. From the spec:
@@ -158,7 +129,7 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 				fmt.Fprintf(&buf, "<%s:%s", t.Name.Space, t.Name.Local)
 			}
 
-			for _, attr := range sortAttr.attrs {
+			for _, attr := range sortAttr.Attrs {
 				// From the spec:
 				//
 				// Attribute Nodes- a space, the node's QName, an equals sign, an open
@@ -285,13 +256,6 @@ func Canonicalize(r RawTokenReader) ([]byte, error) {
 	}
 }
 
-func shouldRenderName(known, rendered *stack.Stack, name string) bool {
-	knownURI, _ := known.Get(name)
-	renderedURI, ok := rendered.Get(name)
-
-	return !ok || knownURI != renderedURI
-}
-
 func getNamespace(attr xml.Attr) (string, bool) {
 	if attr.Name.Space == "" && attr.Name.Local == "xmlns" {
 		return "", true
@@ -326,73 +290,3 @@ var (
 	nl      = []byte("\n")
 	escNl   = []byte("&#xA;")
 )
-
-type sortAttr struct {
-	stack *stack.Stack
-	attrs []xml.Attr
-}
-
-func (s sortAttr) Len() int {
-	return len(s.attrs)
-}
-
-func (s sortAttr) Swap(i, j int) {
-	s.attrs[i], s.attrs[j] = s.attrs[j], s.attrs[i]
-}
-
-func (s sortAttr) Less(i, j int) bool {
-	// Many comments in this function are copied from:
-	//
-	// https://www.w3.org/TR/2001/REC-xml-c14n-20010315#DocumentOrder
-
-	// The spec states:
-	//
-	// "Namespace nodes have a lesser document order position than attribute
-	// nodes."
-	//
-	// And:
-	//
-	// "An element's namespace nodes are sorted lexicographically by local name
-	// (the default namespace node, if one exists, has no local name and is
-	// therefore lexicographically least)."
-	//
-	// It follows that the very first node is the default namespace node. Let's
-	// handle those first:
-	if s.attrs[i].Name.Space == "" && s.attrs[i].Name.Local == "xmlns" {
-		return true
-	}
-
-	if s.attrs[j].Name.Space == "" && s.attrs[j].Name.Local == "xmlns" {
-		return false
-	}
-
-	// Namespace nodes go first. If one is a namespace node and the other isn't,
-	// then it goes first.
-	if s.attrs[i].Name.Space == "xmlns" && s.attrs[j].Name.Space != "xmlns" {
-		return true
-	}
-
-	if s.attrs[i].Name.Space != "xmlns" && s.attrs[j].Name.Space == "xmlns" {
-		return false
-	}
-
-	// Break ties between two namespace nodes by their local name.
-	if s.attrs[i].Name.Space == "xmlns" && s.attrs[j].Name.Space == "xmlns" {
-		return s.attrs[i].Name.Local < s.attrs[j].Name.Local
-	}
-
-	// Finally:
-	//
-	// "An element's attribute nodes are sorted lexicographically with namespace
-	// URI as the primary key and local name as the secondary key (an empty
-	// namespace URI is lexicographically least)."
-	//
-	// This just means: sort by Space first, break ties by Local.
-	spaceI, _ := s.stack.Get(s.attrs[i].Name.Space)
-	spaceJ, _ := s.stack.Get(s.attrs[j].Name.Space)
-	if spaceI != spaceJ {
-		return spaceI < spaceJ
-	}
-
-	return s.attrs[i].Name.Local < s.attrs[j].Name.Local
-}
