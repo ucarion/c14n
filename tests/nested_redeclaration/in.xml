@@ -1,5 +1,5 @@
 <root>
-  <foo xmlns:a="x">
-    <bar xmlns:a="x" a:y="z" />
+  <foo xmlns:a="http://example.com">
+    <bar xmlns:a="http://example.com" a:y="z" />
   </foo>
 </root>
